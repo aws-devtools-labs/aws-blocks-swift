@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Blocks Demo</title>
+  <style>
+    body { font-family: sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; }
+    .section { margin: 30px 0; padding: 20px; border: 1px solid #ddd; border-radius: 8px; }
+    button { padding: 10px 20px; margin: 5px; cursor: pointer; }
+    input { padding: 8px; margin: 5px; }
+    .result { margin-top: 10px; padding: 10px; background: #f5f5f5; border-radius: 4px; }
+    .success { color: green; }
+    .error { color: red; }
+    #auth-status { font-weight: bold; margin-bottom: 10px; }
+    .todo-item { display: flex; align-items: center; gap: 10px; padding: 8px; border-bottom: 1px solid #eee; }
+    .todo-item input[type="checkbox"] { cursor: pointer; }
+    .todo-item .todo-title { flex: 1; border: none; background: transparent; font-size: inherit; padding: 4px; }
+    .todo-item .todo-title:focus { outline: 1px solid #4CAF50; background: #f9f9f9; }
+    .todo-item select { padding: 4px; }
+    .todo-item button { padding: 5px 10px; }
+    #todo-input { flex: 1; }
+    #todo-priority { padding: 8px; }
+    .todo-add { display: flex; gap: 10px; margin-bottom: 15px; }
+    .cursor-dot { position: absolute; pointer-events: none; transition: left 0.05s linear, top 0.05s linear; }
+    .cursor-dot svg { width: 24px; height: 24px; }
+    .cursor-dot .label { position: absolute; top: 20px; left: 16px; font-size: 10px; padding: 2px 5px; border-radius: 4px; white-space: nowrap; }
+  </style>
+</head>
+<body>
+  <h1>Blocks Demo</h1>
+  
+  <div class="section">
+    <h2>Authentication</h2>
+    <div id="auth-status"></div>
+    <div id="auth-container"></div>
+  </div>
+  
+  <div class="section">
+    <h2>Todo List</h2>
+    <div class="todo-add">
+      <input type="text" id="todo-input" placeholder="New todo..." onkeypress="if(event.key==='Enter') addTodo()">
+      <select id="todo-priority">
+        <option value="1">High</option>
+        <option value="2" selected>Medium</option>
+        <option value="3">Low</option>
+      </select>
+      <button onclick="addTodo()">Add</button>
+    </div>
+    <div style="margin-bottom: 10px;">
+      <label>Sort by: </label>
+      <select onchange="changeSort(this.value)">
+        <option value="none">Todo ID</option>
+        <option value="createdAt">Creation Time</option>
+        <option value="priority">Priority</option>
+        <option value="title">Title</option>
+      </select>
+    </div>
+    <div id="todo-error" class="result"></div>
+    <div id="todo-list"></div>
+  </div>
+  
+  <div class="section">
+    <h2>Realtime Cursors</h2>
+    <div id="realtime-status" style="font-size: 12px; color: #666;"></div>
+    <div id="realtime-area" style="position: relative; width: 100%; height: 300px; background: #f8f9fa; border-radius: 8px; margin-top: 8px; overflow: hidden; cursor: crosshair;">
+    </div>
+    <p style="font-size: 12px; color: #999; margin-top: 4px;">Move your mouse in the area above to share your cursor position</p>
+  </div>
+
+  <div class="section">
+    <h2>File Storage</h2>
+    <input type="text" id="filePath" placeholder="File path" value="test/hello.txt">
+    <div style="margin-top: 8px;">
+      <input type="file" id="fileInput">
+      <button onclick="uploadFile()">Upload</button>
+      <button onclick="downloadFile()">Download</button>
+    </div>
+    <div id="file-result" class="result"></div>
+    <div id="file-preview" style="margin-top: 8px;"></div>
+  </div>
+
+  <div class="section">
+    <h2>Cookie Test</h2>
+    <input type="text" id="cookieName" placeholder="Cookie name" value="session">
+    <input type="text" id="cookieValue" placeholder="Cookie value" value="abc123">
+    <button onclick="testSetCookie()">Set Cookie</button>
+    <button onclick="testGetCookie()">Get Cookie</button>
+    <button onclick="testDeleteCookie()">Delete Cookie</button>
+    <div id="cookie-result" class="result"></div>
+  </div>
+  
+  <div class="section">
+    <h2>KV Store Test</h2>
+    <input type="text" id="key" placeholder="Key" value="test-key">
+    <input type="text" id="value" placeholder="Value" value="test-value">
+    <button onclick="testSetValue()">Set Value</button>
+    <button onclick="testGetValue()">Get Value</button>
+    <div id="kv-result" class="result"></div>
+  </div>
+
+  <div class="section">
+    <h2>Test Results</h2>
+    <button onclick="runAllTests()">Run All Tests</button>
+    <div id="test-results" class="result"></div>
+  </div>
+
+  <script type="module" src="/src/index.ts"></script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+# Built assets
+.build/
+.bb-*
+
+
+## Xcode setups
+**/xcuserdata
+**/*.xcuserdata
+*.xcuserstate
+
+*.xcworkspace/
+!.swiftpm/xcode/package.xcworkspace
+
+*blocks.spec.json

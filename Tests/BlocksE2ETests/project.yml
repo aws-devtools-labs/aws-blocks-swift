@@ -1,0 +1,69 @@
+name: BlocksE2ETestApp
+options:
+  bundleIdPrefix: com.aws.blocks.swift
+  deploymentTarget:
+    iOS: "16.0"
+    macOS: "13.0"
+  xcodeVersion: "15.0"
+  generateEmptyDirectories: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    DEVELOPMENT_TEAM: ""
+
+packages:
+  aws-blocks-swift:
+    path: ../..
+
+targets:
+  BlocksE2ETestApp:
+    type: application
+    platform: iOS
+    sources:
+      - path: BlocksE2ETestApp
+    info:
+      path: BlocksE2ETestApp/Info.plist
+      properties:
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.aws.blocks.swift.e2e
+        INFOPLIST_FILE: BlocksE2ETestApp/Info.plist
+        GENERATE_INFOPLIST_FILE: false
+        PRODUCT_NAME: BlocksE2ETestApp
+    dependencies:
+      - package: aws-blocks-swift
+        product: BlocksRuntime
+
+  BlocksE2ETests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: .
+        group: ""
+        excludes:
+          - BlocksE2ETestApp/**
+          - project.yml
+          - "*.xcodeproj/**"
+          - "*.xcworkspace/**"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.aws.blocks.swift.e2e.tests
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/BlocksE2ETestApp.app/BlocksE2ETestApp"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+    dependencies:
+      - target: BlocksE2ETestApp
+      - package: aws-blocks-swift
+        product: BlocksRuntime
+    scheme:
+      testTargets:
+        - BlocksE2ETests
+      environmentVariables:
+        - variable: BLOCKS_URL
+          value: http://localhost:3001/aws-blocks/api
+          isEnabled: true
+        - variable: RUN_OIDC
+          value: "1"
+          isEnabled: false

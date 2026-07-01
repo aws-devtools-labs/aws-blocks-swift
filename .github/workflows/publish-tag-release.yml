@@ -12,7 +12,7 @@ jobs:
   tag:
     name: Create Git Tag & GitHub Release
     runs-on: ubuntu-latest
-    if: github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'release/')
+    if: github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'release/swift-')
     steps:
       - uses: actions/checkout@v4
         with:

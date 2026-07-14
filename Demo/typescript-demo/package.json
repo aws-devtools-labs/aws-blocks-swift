@@ -36,8 +36,16 @@
     "vite": "^6.4.3",
     "tsx": "^4.7.0",
     "concurrently": "^8.2.0",
-    "esbuild": "^0.27.1",
-    "aws-cdk-lib": "2.257.0",
+    "esbuild": "^0.28.1",
+    "aws-cdk-lib": "2.261.0",
     "constructs": "^10.6.0"
+  },
+  "overrides": {
+    "hono": ">=4.12.25",
+    "@opentelemetry/core": ">=2.8.0",
+    "brace-expansion": ">=5.0.6",
+    "postcss": ">=8.5.10",
+    "esbuild": "$esbuild",
+    "aws-cdk-lib": "2.261.0"
   }
 }

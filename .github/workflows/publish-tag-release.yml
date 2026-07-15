@@ -1,0 +1,60 @@
+name: Release
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    name: Create Git Tag & GitHub Release
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'release/swift-')
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read version from CHANGELOG
+        id: version
+        run: |
+          VERSION=$(sed -n 's/^## \([0-9]*\.[0-9]*\.[0-9]*\).*/\1/p' CHANGELOG.md | head -1)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Releasing v${VERSION}"
+
+      - name: Check tag doesn't already exist
+        id: check
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          if git rev-parse "${VERSION}" >/dev/null 2>&1; then
+            echo "Tag ${VERSION} already exists, skipping"
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create tag and release
+        if: steps.check.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "${VERSION}" -m "Release ${VERSION}"
+          git push origin "${VERSION}"
+
+          NOTES=$(sed -n '/^## /,/^## /{ /^## /!p; }' CHANGELOG.md | head -30)
+          if [ -z "$NOTES" ]; then
+            gh release create "${VERSION}" \
+              --title "${VERSION}" \
+              --generate-notes
+          else
+            gh release create "${VERSION}" \
+              --title "${VERSION}" \
+              --notes "$NOTES"
+          fi

@@ -1,0 +1,153 @@
+name: Sync release from aws-blocks
+
+# Pulls a tagged Swift SDK release from the public aws-blocks repo and opens a
+# release PR here. Merging that PR runs the Release workflow, which creates the
+# <version> tag that Swift Package Manager resolves.
+#
+# aws-blocks is public, so reading it needs no extra credential (checkout still
+# sends this repo's token by default, which is harmless). Every write goes to
+# this repo with GITHUB_TOKEN, so no cross-repo secret is involved. Steps that
+# run scripts from aws-blocks get no token.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Swift SDK version to sync (aws-blocks tag swift@<version>), for example 0.2.0
+        required: true
+        type: string
+
+concurrency:
+  group: sync-from-monorepo
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    name: Open release PR
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          # Plain MAJOR.MINOR.PATCH only. The Release workflow reads the version
+          # from the CHANGELOG heading and does not handle pre-release suffixes.
+          if ! printf '%s' "$VERSION" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; then
+            echo "::error::'$VERSION' is not a plain MAJOR.MINOR.PATCH version."
+            exit 1
+          fi
+          if [ "$(printf '%s' "$VERSION" | wc -l)" -ne 0 ]; then
+            echo "::error::Version contains a newline."
+            exit 1
+          fi
+
+      - name: Checkout aws-blocks at the swift@<version> tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: aws-devtools-labs/aws-blocks
+          ref: refs/tags/swift@${{ inputs.version }}
+          path: monorepo
+          # Full history, so the next step can check the tag is on main.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check the tag is the merged release commit
+        working-directory: monorepo
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          SHA=$(git rev-parse HEAD)
+          if ! git merge-base --is-ancestor "$SHA" origin/main; then
+            echo "::error::swift@${VERSION} is not reachable from aws-blocks main."
+            exit 1
+          fi
+          VERSION_IN_TAG=$(jq -r .version native/swift/package.json)
+          if [ "$VERSION_IN_TAG" != "$VERSION" ]; then
+            echo "::error::native/swift/package.json at the tag says ${VERSION_IN_TAG}, expected ${VERSION}."
+            exit 1
+          fi
+          # swift@* tags can be moved by anyone with write access, so also require
+          # that the tag points at the commit that merged release/swift-<version>.
+          PR=$(gh api "repos/aws-devtools-labs/aws-blocks/commits/${SHA}/pulls" \
+            --jq ".[] | select(.merged_at != null and .head.ref == \"release/swift-${VERSION}\") | .number")
+          if [ -z "$PR" ]; then
+            echo "::error::swift@${VERSION} (${SHA}) is not the merge commit of a release/swift-${VERSION} PR."
+            exit 1
+          fi
+          echo "Tag matches aws-blocks PR #${PR}."
+
+      - name: Checkout aws-blocks-swift
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: mirror
+          fetch-depth: 0
+          # Don't persist the token into .git/config. "Push and open PR" wires up
+          # the gh credential helper, so the steps that run aws-blocks scripts
+          # have no token.
+          persist-credentials: false
+
+      - name: Guard against an existing or older release
+        working-directory: mirror
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if git rev-parse -q --verify "refs/tags/${VERSION}" >/dev/null; then
+            echo "::error::Tag ${VERSION} already exists."
+            exit 1
+          fi
+          if git rev-parse -q --verify "refs/remotes/origin/release/swift-${VERSION}" >/dev/null; then
+            echo "::error::Branch release/swift-${VERSION} already exists. Open the PR from it by hand, or delete it and re-run."
+            exit 1
+          fi
+          LATEST=$(git tag --list '[0-9]*.[0-9]*.[0-9]*' | sort -V | tail -1)
+          if [ -n "$LATEST" ] && [ "$(printf '%s\n%s\n' "$LATEST" "$VERSION" | sort -V | tail -1)" != "$VERSION" ]; then
+            echo "::error::${VERSION} is not newer than the latest release ${LATEST}."
+            exit 1
+          fi
+
+      - name: Sync files
+        run: monorepo/native/swift/scripts/sync-to-mirror.sh mirror
+
+      - name: Render PR body
+        working-directory: mirror
+        env:
+          VERSION: ${{ inputs.version }}
+          BODY_FILE: ${{ runner.temp }}/release-body.md
+        run: |
+          set -o pipefail
+          ../monorepo/native/swift/scripts/extract-changelog.sh CHANGELOG.md "$VERSION" \
+            | ../monorepo/native/swift/scripts/render-release-body.sh target "$VERSION" > "$BODY_FILE"
+
+      # Runs no aws-blocks code, so it is the only step that gets the token.
+      - name: Push and open PR
+        working-directory: mirror
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          BODY_FILE: ${{ runner.temp }}/release-body.md
+        run: |
+          BRANCH="release/swift-${VERSION}"
+
+          gh auth setup-git
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git checkout -b "$BRANCH"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "::error::No changes to sync."
+            exit 1
+          fi
+          git commit -m "chore: release ${VERSION}"
+          git push origin "$BRANCH"
+
+          gh pr create \
+            --base main \
+            --head "$BRANCH" \
+            --title "chore: release ${VERSION}" \
+            --body-file "$BODY_FILE"

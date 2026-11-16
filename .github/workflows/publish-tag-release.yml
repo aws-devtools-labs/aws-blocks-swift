@@ -48,13 +48,24 @@ jobs:
           git tag "${VERSION}" -m "Release ${VERSION}"
           git push origin "${VERSION}"
 
-          NOTES=$(sed -n '/^## /,/^## /{ /^## /!p; }' CHANGELOG.md)
+          # Only this version's section. Falls back to generated notes when the
+          # heading isn't a bare `## X.Y.Z`.
+          NOTES=$(scripts/extract-changelog.sh CHANGELOG.md "$VERSION" || true)
+
+          # 0.x releases stay marked as pre-releases, as 0.1.0 and 0.1.1 were.
+          PRERELEASE=()
+          if [ "${VERSION%%.*}" = "0" ]; then
+            PRERELEASE=(--prerelease)
+          fi
+
           if [ -z "$NOTES" ]; then
             gh release create "${VERSION}" \
               --title "${VERSION}" \
+              "${PRERELEASE[@]}" \
               --generate-notes
           else
             gh release create "${VERSION}" \
               --title "${VERSION}" \
+              "${PRERELEASE[@]}" \
               --notes "$NOTES"
           fi

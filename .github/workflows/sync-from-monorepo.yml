@@ -4,10 +4,17 @@ name: Sync release from aws-blocks
 # release PR here. Merging that PR runs the Release workflow, which creates the
 # <version> tag that Swift Package Manager resolves.
 #
-# aws-blocks is public, so reading it needs no extra credential (checkout still
-# sends this repo's token by default, which is harmless). Every write goes to
-# this repo with GITHUB_TOKEN, so no cross-repo secret is involved. Steps that
-# run scripts from aws-blocks get no token.
+# Before the first run, an admin must turn on "Allow GitHub Actions to create
+# and approve pull requests" in Settings > Actions > General. Without it, the
+# PR can't be opened.
+#
+# Two jobs, so that code from aws-blocks never runs while a write token exists:
+# - `prepare` has a read-only token. It checks that the swift@<version> tag is
+#   the merged release commit, runs the aws-blocks sync script against a
+#   checkout of this repo, and uploads the staged change and the PR body.
+# - `open-pr` has the write token. It runs no aws-blocks code: it applies the
+#   staged change to a fresh checkout, then pushes the branch and opens the PR.
+# aws-blocks is public, so reading it needs no extra credential.
 
 on:
   workflow_dispatch:
@@ -22,14 +29,28 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
-  sync:
-    name: Open release PR
+  prepare:
+    name: Prepare release
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      base-sha: ${{ steps.stage.outputs.base-sha }}
     steps:
+      # A dispatch from another branch would put that branch's .github and
+      # license files into the release PR. Compare github.ref, because a tag
+      # named main would also match github.ref_name.
+      - name: Enforce main branch
+        if: github.ref != 'refs/heads/main'
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          echo "::error::This workflow can only run from main (got '${REF}')."
+          exit 1
+
       - name: Validate version
         env:
           VERSION: ${{ inputs.version }}
@@ -62,7 +83,9 @@ jobs:
           VERSION: ${{ inputs.version }}
         run: |
           SHA=$(git rev-parse HEAD)
-          if ! git merge-base --is-ancestor "$SHA" origin/main; then
+          # Full ref name: a tag called origin/main would win over the
+          # remote-tracking branch if this said just origin/main.
+          if ! git merge-base --is-ancestor "$SHA" refs/remotes/origin/main; then
             echo "::error::swift@${VERSION} is not reachable from aws-blocks main."
             exit 1
           fi
@@ -72,9 +95,10 @@ jobs:
             exit 1
           fi
           # swift@* tags can be moved by anyone with write access, so also require
-          # that the tag points at the commit that merged release/swift-<version>.
+          # that the tag points at the commit that merged release/swift-<version>
+          # into main. (SHA comes from git rev-parse, so interpolating it is safe.)
           PR=$(gh api "repos/aws-devtools-labs/aws-blocks/commits/${SHA}/pulls" \
-            --jq ".[] | select(.merged_at != null and .head.ref == \"release/swift-${VERSION}\") | .number")
+            --jq ".[] | select(.merged_at != null and .base.ref == \"main\" and .merge_commit_sha == \"${SHA}\" and .head.ref == \"release/swift-${VERSION}\") | .number")
           if [ -z "$PR" ]; then
             echo "::error::swift@${VERSION} (${SHA}) is not the merge commit of a release/swift-${VERSION} PR."
             exit 1
@@ -86,9 +110,6 @@ jobs:
         with:
           path: mirror
           fetch-depth: 0
-          # Don't persist the token into .git/config. "Push and open PR" wires up
-          # the gh credential helper, so the steps that run aws-blocks scripts
-          # have no token.
           persist-credentials: false
 
       - name: Guard against an existing or older release
@@ -104,7 +125,8 @@ jobs:
             echo "::error::Branch release/swift-${VERSION} already exists. Open the PR from it by hand, or delete it and re-run."
             exit 1
           fi
-          LATEST=$(git tag --list '[0-9]*.[0-9]*.[0-9]*' | sort -V | tail -1)
+          # Plain versions only, so a hand-made 0.2.0-rc.1 tag doesn't count as newer than 0.2.0.
+          LATEST=$(git tag --list | grep -E '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$' | sort -V | tail -1 || true)
           if [ -n "$LATEST" ] && [ "$(printf '%s\n%s\n' "$LATEST" "$VERSION" | sort -V | tail -1)" != "$VERSION" ]; then
             echo "::error::${VERSION} is not newer than the latest release ${LATEST}."
             exit 1
@@ -113,23 +135,59 @@ jobs:
       - name: Sync files
         run: monorepo/native/swift/scripts/sync-to-mirror.sh mirror
 
-      - name: Render PR body
+      - name: Stage the change and render the PR body
+        id: stage
         working-directory: mirror
         env:
           VERSION: ${{ inputs.version }}
-          BODY_FILE: ${{ runner.temp }}/release-body.md
+          OUT: ${{ runner.temp }}/release
         run: |
           set -o pipefail
+          mkdir -p "$OUT"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "::error::No changes to sync."
+            exit 1
+          fi
+          git diff --cached --binary > "$OUT/sync.patch"
+          echo "base-sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           ../monorepo/native/swift/scripts/extract-changelog.sh CHANGELOG.md "$VERSION" \
-            | ../monorepo/native/swift/scripts/render-release-body.sh target "$VERSION" > "$BODY_FILE"
+            | ../monorepo/native/swift/scripts/render-release-body.sh target "$VERSION" > "$OUT/body.md"
 
-      # Runs no aws-blocks code, so it is the only step that gets the token.
+      - name: Upload the staged change
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-${{ inputs.version }}
+          path: ${{ runner.temp }}/release
+          if-no-files-found: error
+          retention-days: 1
+
+  open-pr:
+    name: Open release PR
+    needs: prepare
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout aws-blocks-swift
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The commit the change was staged against.
+          ref: ${{ needs.prepare.outputs.base-sha }}
+          persist-credentials: false
+
+      - name: Download the staged change
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-${{ inputs.version }}
+          path: ${{ runner.temp }}/release
+
       - name: Push and open PR
-        working-directory: mirror
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ inputs.version }}
-          BODY_FILE: ${{ runner.temp }}/release-body.md
+          IN: ${{ runner.temp }}/release
         run: |
           BRANCH="release/swift-${VERSION}"
 
@@ -138,16 +196,17 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
           git checkout -b "$BRANCH"
-          git add -A
-          if git diff --cached --quiet; then
-            echo "::error::No changes to sync."
-            exit 1
-          fi
+          git apply --index --binary "$IN/sync.patch"
           git commit -m "chore: release ${VERSION}"
           git push origin "$BRANCH"
 
-          gh pr create \
-            --base main \
-            --head "$BRANCH" \
-            --title "chore: release ${VERSION}" \
-            --body-file "$BODY_FILE"
+          # If the PR can't be opened, remove the branch so a plain re-run works.
+          if ! gh pr create \
+              --base main \
+              --head "$BRANCH" \
+              --title "chore: release ${VERSION}" \
+              --body-file "$IN/body.md"; then
+            echo "::error::Could not open the PR. If Actions can't create pull requests here, enable 'Allow GitHub Actions to create and approve pull requests' in Settings > Actions > General."
+            git push origin --delete "$BRANCH"
+            exit 1
+          fi

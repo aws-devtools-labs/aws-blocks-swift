@@ -1,6 +1,6 @@
 name: Sync release from aws-blocks
 
-# Pulls a tagged Swift SDK release from the public aws-blocks repo and opens a
+# Pulls a tagged Swift SDK release from the public aws/cdk-blocks repo and opens a
 # release PR here. Merging that PR runs the Release workflow, which creates the
 # <version> tag that Swift Package Manager resolves.
 #
@@ -8,19 +8,19 @@ name: Sync release from aws-blocks
 # and approve pull requests" in Settings > Actions > General. Without it, the
 # PR can't be opened.
 #
-# Two jobs, so that code from aws-blocks never runs while a write token exists:
+# Two jobs, so that code from cdk-blocks never runs while a write token exists:
 # - `prepare` has a read-only token. It checks that the swift@<version> tag is
-#   the merged release commit, runs the aws-blocks sync script against a
+#   the merged release commit, runs the cdk-blocks sync script against a
 #   checkout of this repo, and uploads the staged change and the PR body.
-# - `open-pr` has the write token. It runs no aws-blocks code: it applies the
+# - `open-pr` has the write token. It runs no cdk-blocks code: it applies the
 #   staged change to a fresh checkout, then pushes the branch and opens the PR.
-# aws-blocks is public, so reading it needs no extra credential.
+# cdk-blocks is public, so reading it needs no extra credential.
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: Swift SDK version to sync (aws-blocks tag swift@<version>), for example 0.2.0
+        description: Swift SDK version to sync (cdk-blocks tag swift@<version>), for example 0.2.0
         required: true
         type: string
 
@@ -66,10 +66,10 @@ jobs:
             exit 1
           fi
 
-      - name: Checkout aws-blocks at the swift@<version> tag
+      - name: Checkout cdk-blocks at the swift@<version> tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: aws-devtools-labs/aws-blocks
+          repository: aws/cdk-blocks
           ref: refs/tags/swift@${{ inputs.version }}
           path: monorepo
           # Full history, so the next step can check the tag is on main.
@@ -86,7 +86,7 @@ jobs:
           # Full ref name: a tag called origin/main would win over the
           # remote-tracking branch if this said just origin/main.
           if ! git merge-base --is-ancestor "$SHA" refs/remotes/origin/main; then
-            echo "::error::swift@${VERSION} is not reachable from aws-blocks main."
+            echo "::error::swift@${VERSION} is not reachable from cdk-blocks main."
             exit 1
           fi
           VERSION_IN_TAG=$(jq -r .version native/swift/package.json)
@@ -97,15 +97,15 @@ jobs:
           # swift@* tags can be moved by anyone with write access, so also require
           # that the tag points at the commit that merged release/swift-<version>
           # into main. (SHA comes from git rev-parse, so interpolating it is safe.)
-          PR=$(gh api "repos/aws-devtools-labs/aws-blocks/commits/${SHA}/pulls" \
+          PR=$(gh api "repos/aws/cdk-blocks/commits/${SHA}/pulls" \
             --jq ".[] | select(.merged_at != null and .base.ref == \"main\" and .merge_commit_sha == \"${SHA}\" and .head.ref == \"release/swift-${VERSION}\") | .number")
           if [ -z "$PR" ]; then
             echo "::error::swift@${VERSION} (${SHA}) is not the merge commit of a release/swift-${VERSION} PR."
             exit 1
           fi
-          echo "Tag matches aws-blocks PR #${PR}."
+          echo "Tag matches cdk-blocks PR #${PR}."
 
-      - name: Checkout aws-blocks-swift
+      - name: Checkout cdk-blocks-swift
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           path: mirror
@@ -170,7 +170,7 @@ jobs:
       contents: write
       pull-requests: write
     steps:
-      - name: Checkout aws-blocks-swift
+      - name: Checkout cdk-blocks-swift
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # The commit the change was staged against.

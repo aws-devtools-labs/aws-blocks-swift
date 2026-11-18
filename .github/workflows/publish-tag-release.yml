@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     if: github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'release/swift-')
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -29,7 +29,7 @@ jobs:
         id: check
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          if git rev-parse "${VERSION}" >/dev/null 2>&1; then
+          if git rev-parse -q --verify "refs/tags/${VERSION}" >/dev/null; then
             echo "Tag ${VERSION} already exists, skipping"
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
@@ -48,13 +48,24 @@ jobs:
           git tag "${VERSION}" -m "Release ${VERSION}"
           git push origin "${VERSION}"
 
-          NOTES=$(sed -n '/^## /,/^## /{ /^## /!p; }' CHANGELOG.md | head -30)
+          # Only this version's section. Falls back to generated notes when the
+          # heading isn't a bare `## X.Y.Z`.
+          NOTES=$(scripts/extract-changelog.sh CHANGELOG.md "$VERSION" || true)
+
+          # 0.x releases stay marked as pre-releases, as 0.1.0 and 0.1.1 were.
+          PRERELEASE=()
+          if [ "${VERSION%%.*}" = "0" ]; then
+            PRERELEASE=(--prerelease)
+          fi
+
           if [ -z "$NOTES" ]; then
             gh release create "${VERSION}" \
               --title "${VERSION}" \
+              "${PRERELEASE[@]}" \
               --generate-notes
           else
             gh release create "${VERSION}" \
               --title "${VERSION}" \
+              "${PRERELEASE[@]}" \
               --notes "$NOTES"
           fi

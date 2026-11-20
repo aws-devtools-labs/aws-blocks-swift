@@ -23,11 +23,11 @@ final class HybridArmTests: XCTestCase {
         return try Data(contentsOf: specURL)
     }
 
-    private func generateCode(_ data: Data) throws -> (models: String, api: String) {
+    private func generateCode(_ data: Data) throws -> GeneratedSources {
         let parser = OpenRPCParser()
         let rpcModel = try parser.parse(data: data)
         let codegenModel = CodegenModelBuilder().build(from: rpcModel)
-        return SwiftCodeGenerator().generate(from: codegenModel)
+        return try SwiftCodeGenerator().generate(from: codegenModel)
     }
 
     func testRealSetAuthStateSpecParsesWithoutError() throws {
@@ -43,16 +43,22 @@ final class HybridArmTests: XCTestCase {
         let rpcModel = try OpenRPCParser().parse(data: data)
         let codegenModel = CodegenModelBuilder().build(from: rpcModel)
 
-        // Find the input union in the operation's nested types or param type.
+        // The input is the shared `AuthActionInput` (the spec names it with `x-blocks-type-name`), declared once
+        // at the top level of Models.swift.
         let operation = codegenModel.apiNamespaces.flatMap { $0.operations }.first { $0.name == "setAuthState" }!
-        let inputType = operation.parameters.first?.type
+        guard case .typeReference("AuthActionInput") = operation.parameters.first?.type else {
+            XCTFail("setAuthState input should be the shared AuthActionInput")
+            return
+        }
+        let inputType = codegenModel.sharedTypes.first { $0.name == "AuthActionInput" }?.type
         guard case .union(_, let variants, _) = inputType else {
             XCTFail("Top-level setAuthState input is not a union")
             return
         }
 
-        // The confirmSignIn arm must carry an embedded union with seven
-        // challenge variants — the regrouped shape.
+        // The confirmSignIn arm must carry an embedded union with eight
+        // challenge variants — the regrouped shape (fixture 18 is the live
+        // `Auth` state machine; see codegen-fixtures/check-live-auth-fixtures.mjs).
         guard let confirmSignIn = variants.first(where: { $0.discriminatorValue == "confirmSignIn" }) else {
             XCTFail("Expected a confirmSignIn variant")
             return
@@ -67,8 +73,8 @@ final class HybridArmTests: XCTestCase {
         }
         XCTAssertEqual(innerName, "ConfirmSignInChallenge",
                        "Embedded union should be named after parent + discriminator field")
-        XCTAssertEqual(innerVariants.count, 7,
-                       "Expected seven challenge variants (code, mfaType, newPassword, totpSetup, email, password, firstFactor)")
+        XCTAssertEqual(innerVariants.count, 8,
+                       "Expected eight challenge variants (code, mfaType, newPassword, totpSetup, email, password, firstFactor, webauthn)")
     }
 
     func testGeneratesNamedConfirmSignInTypesNotNumericSuffixes() throws {
